@@ -1,0 +1,45 @@
+{
+  "name": "@crnkl/burn-verification",
+  "version": "0.1.0-alpha.0",
+  "description": "Independent verifier for Crinkl GMV price aggregates and candidate bindings.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./price-aggregate-v1": {
+      "types": "./dist/priceAggregateV1.d.ts",
+      "import": "./dist/priceAggregateV1.js"
+    },
+    "./verdict": {
+      "types": "./dist/verdict.d.ts",
+      "import": "./dist/verdict.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "verify": "pnpm build && pnpm test",
+    "prepack": "pnpm verify"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.12.0"
+}
