@@ -1,0 +1,21 @@
+{
+  "schema": "CrinklBurnVerificationProtocolProvenanceV1",
+  "adoptedProtocol": {
+    "repository": "crinkl-protocol/crinkl-protocol",
+    "mergeCommit": "edc83f1c91033b3d0c4a3191a0dbaf91165a5833",
+    "ruleDocument": "protocol/GMV_PRICE_EVIDENCE.md",
+    "vectorManifest": "conformance/v1/vectors/gmv.priceAggregateV1.json",
+    "vectorId": "sample_contributors_exceed_committee"
+  },
+  "publicSpecification": {
+    "repository": "crinkl-protocol/crinkl-protocol-spec",
+    "mergeCommit": "2261b46e555a7295eaff1d393aa708e2830bf100",
+    "maturity": "draft",
+    "formatDocument": "02-proof-lifecycle/gmv-price-aggregate-v1.md",
+    "conformanceDocument": "07-conformance/gmv-price-aggregate-verification.md"
+  },
+  "implementationExtraction": {
+    "repository": "crinkl-proof-validator",
+    "commit": "3c9baa47"
+  }
+}
