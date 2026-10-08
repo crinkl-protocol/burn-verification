@@ -287,6 +287,14 @@ export interface VerifyGmvHistoricalPriceInputV1 {
     readonly registryNetworkId: string;
     readonly source: unknown;
     readonly aggregationPolicyHash: string;
+    /** Complete independently accepted legacy formation policy; its hash is opaque. */
+    readonly aggregationPolicy: {
+      readonly aggregationPolicyHash: string;
+      readonly maximumPublicationDelaySeconds: number;
+      readonly minimumPoolTvlMicroUsd: string;
+      readonly minimumSamplesPerContributor: number;
+      readonly toleranceBps: number;
+    };
     readonly aggregateArtifactContentHash: string;
     readonly aggregateHash: string;
     readonly priceMicroUsdPerToken: number;
@@ -364,6 +372,14 @@ export function verifyGmvHistoricalPriceV1(input: VerifyGmvHistoricalPriceInputV
     const verified = verifyGmvPriceAggregateV1({ aggregate: input.aggregate, registry: input.authenticatedCommittee.registry,
       resolvedArtifactContentHash: artifactPin, resolvedSampleSetRoot: sampleRoot });
     const aggregate = verified.aggregate;
+    const policyFields = ["aggregationPolicyHash", "maximumPublicationDelaySeconds",
+      "minimumPoolTvlMicroUsd", "minimumSamplesPerContributor", "toleranceBps"];
+    const trustedPolicy = exact(expected.aggregationPolicy, policyFields);
+    const aggregatePolicy = Object.fromEntries(policyFields.map((field) =>
+      [field, aggregate.aggregation[field as keyof typeof aggregate.aggregation]]));
+    if (trustedPolicy.aggregationPolicyHash !== expected.aggregationPolicyHash ||
+        canonicalize(trustedPolicy as CanonicalValue) !== canonicalize(aggregatePolicy as CanonicalValue))
+      reject("HISTORICAL_PRICE_POLICY_MISMATCH");
     if (verified.aggregateHash !== aggregatePin || aggregate.networkId !== expected.priceNetworkId ||
         canonicalize(aggregate.source as unknown as CanonicalValue) !== canonicalize(expected.source as CanonicalValue) ||
         aggregate.aggregation.aggregationPolicyHash !== asSha256Digest(expected.aggregationPolicyHash, "expected aggregation policy hash") ||

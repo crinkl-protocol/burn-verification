@@ -47,6 +47,14 @@ export interface VerifyGmvHistoricalPriceInputV1 {
         readonly registryNetworkId: string;
         readonly source: unknown;
         readonly aggregationPolicyHash: string;
+        /** Complete independently accepted legacy formation policy; its hash is opaque. */
+        readonly aggregationPolicy: {
+            readonly aggregationPolicyHash: string;
+            readonly maximumPublicationDelaySeconds: number;
+            readonly minimumPoolTvlMicroUsd: string;
+            readonly minimumSamplesPerContributor: number;
+            readonly toleranceBps: number;
+        };
         readonly aggregateArtifactContentHash: string;
         readonly aggregateHash: string;
         readonly priceMicroUsdPerToken: number;

@@ -33,6 +33,8 @@ function historicalInput() {
       primaryLookup: { status: "AVAILABLE", observedAt: "2026-10-09T00:00:00.000Z", reason: "DIRECT_PRICE" } },
     expected: { gmvWindowDay: day, priceNetworkId: "solana-devnet", registryNetworkId: "crinkl-devnet",
       source: structuredClone(aggregate.source), aggregationPolicyHash: aggregate.aggregation.aggregationPolicyHash,
+      aggregationPolicy: Object.fromEntries(["aggregationPolicyHash", "maximumPublicationDelaySeconds",
+        "minimumPoolTvlMicroUsd", "minimumSamplesPerContributor", "toleranceBps"].map(field=>[field,aggregate.aggregation[field]])),
       aggregateArtifactContentHash: artifactPin, aggregateHash: aggregate.aggregateHash, priceMicroUsdPerToken: 101356 } };
 }
 function repinArtifact(input) {
@@ -77,7 +79,13 @@ const mutations=[
   ["wrong chain network",i=>{i.expected.priceNetworkId="another-chain-network";},"HISTORICAL_PRICE_SCOPE_MISMATCH"],
   ["wrong registry network",i=>{i.expected.registryNetworkId="another-registry-network";},"HISTORICAL_PRICE_SCOPE_MISMATCH"],
   ["wrong accepted full source",i=>{i.expected.source.poolId="different-pool";},"HISTORICAL_PRICE_SCOPE_MISMATCH"],
-  ["wrong accepted policy",i=>{i.expected.aggregationPolicyHash=`sha256:${"0".repeat(64)}`;},"HISTORICAL_PRICE_SCOPE_MISMATCH"],
+  ["wrong accepted policy",i=>{i.expected.aggregationPolicyHash=`sha256:${"0".repeat(64)}`;},"HISTORICAL_PRICE_POLICY_MISMATCH"],
+  ["missing trusted full policy",i=>{delete i.expected.aggregationPolicy;},"SCHEMA_INVALID"],
+  ["weakened trusted sample policy",i=>{i.expected.aggregationPolicy.minimumSamplesPerContributor++;},"HISTORICAL_PRICE_POLICY_MISMATCH"],
+  ["weakened trusted publication delay",i=>{i.expected.aggregationPolicy.maximumPublicationDelaySeconds++;},"HISTORICAL_PRICE_POLICY_MISMATCH"],
+  ["different trusted minimum pool TVL",i=>{i.expected.aggregationPolicy.minimumPoolTvlMicroUsd="1000001";},"HISTORICAL_PRICE_POLICY_MISMATCH"],
+  ["different trusted formation tolerance",i=>{i.expected.aggregationPolicy.toleranceBps++;},"HISTORICAL_PRICE_POLICY_MISMATCH"],
+  ["extra trusted policy field",i=>{i.expected.aggregationPolicy.allowUnchecked=true;},"SCHEMA_INVALID"],
   ["switch from an existing immutable artifact pin",i=>{i.expected.aggregateArtifactContentHash=`sha256:${"0".repeat(64)}`;},"HISTORICAL_PRICE_PIN_MISMATCH"],
   ["wrong pinned aggregate hash",i=>{i.expected.aggregateHash=`sha256:${"0".repeat(64)}`;},"HISTORICAL_PRICE_PIN_MISMATCH"],
   ["tampered observation price",i=>{i.observationSet.reports[0].observedTwapMicroUsd++;},"OBSERVATION_SIGNATURE_INVALID"],

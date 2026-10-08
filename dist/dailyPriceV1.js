@@ -314,6 +314,13 @@ export function verifyGmvHistoricalPriceV1(input) {
         const verified = verifyGmvPriceAggregateV1({ aggregate: input.aggregate, registry: input.authenticatedCommittee.registry,
             resolvedArtifactContentHash: artifactPin, resolvedSampleSetRoot: sampleRoot });
         const aggregate = verified.aggregate;
+        const policyFields = ["aggregationPolicyHash", "maximumPublicationDelaySeconds",
+            "minimumPoolTvlMicroUsd", "minimumSamplesPerContributor", "toleranceBps"];
+        const trustedPolicy = exact(expected.aggregationPolicy, policyFields);
+        const aggregatePolicy = Object.fromEntries(policyFields.map((field) => [field, aggregate.aggregation[field]]));
+        if (trustedPolicy.aggregationPolicyHash !== expected.aggregationPolicyHash ||
+            canonicalize(trustedPolicy) !== canonicalize(aggregatePolicy))
+            reject("HISTORICAL_PRICE_POLICY_MISMATCH");
         if (verified.aggregateHash !== aggregatePin || aggregate.networkId !== expected.priceNetworkId ||
             canonicalize(aggregate.source) !== canonicalize(expected.source) ||
             aggregate.aggregation.aggregationPolicyHash !== asSha256Digest(expected.aggregationPolicyHash, "expected aggregation policy hash") ||
