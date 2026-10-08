@@ -459,7 +459,8 @@ function compareUtf8(left, right) {
 function isStrictlyOrderedDistinct(values) {
     return values.every((value, index) => index === 0 || compareUtf8(values[index - 1], value) < 0);
 }
-function verifyRawEd25519(publicKey, signature, digest) {
+/** Raw digest signature primitive shared by the aggregate and daily observation verifier. */
+export function verifyRawEd25519PriceSignatureV1(publicKey, signature, digest) {
     try {
         const key = createPublicKey({
             key: Buffer.concat([ED25519_RAW_SPKI_DER_PREFIX, Buffer.from(publicKey, "base64")]),
@@ -587,7 +588,7 @@ export function verifyGmvPriceAggregateV1(input) {
             registered.publicKey !== signature.publicKey) {
             return fail("SIGNING_KEY_NOT_ACTIVE");
         }
-        if (!verifyRawEd25519(signature.publicKey, signature.signature, digest)) {
+        if (!verifyRawEd25519PriceSignatureV1(signature.publicKey, signature.signature, digest)) {
             return fail("SIGNATURE_INVALID");
         }
     }
@@ -807,16 +808,7 @@ function verifyCandidateProjection(candidate, verified, resolvedArtifactContentH
         return fail("CANDIDATE_PRICE_VALUE_MISMATCH", "GMV_PRICE_VALUE_MISMATCH");
     }
     if (candidate.priceMicroUsdPerToken !== aggregate.aggregation.priceMicroUsdPerToken) {
-        const toleranceBps = aggregate.aggregation.toleranceBps;
-        const aggregatePrice = BigInt(aggregate.aggregation.priceMicroUsdPerToken);
-        const candidatePrice = BigInt(candidate.priceMicroUsdPerToken);
-        const difference = aggregatePrice >= candidatePrice
-            ? aggregatePrice - candidatePrice
-            : candidatePrice - aggregatePrice;
-        if (toleranceBps === undefined ||
-            difference * 10000n > aggregatePrice * BigInt(toleranceBps)) {
-            return fail("CANDIDATE_PRICE_VALUE_MISMATCH", "GMV_PRICE_VALUE_MISMATCH");
-        }
+        return fail("CANDIDATE_PRICE_VALUE_MISMATCH", "GMV_PRICE_VALUE_MISMATCH");
     }
     if (Date.parse(aggregate.window.windowStart) < Date.parse(candidate.dayWindowEnd)) {
         return fail("CANDIDATE_PRICE_WINDOW_ORDER_MISMATCH", "GMV_PRICE_AGGREGATE_BINDING_MISMATCH");

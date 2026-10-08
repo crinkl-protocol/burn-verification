@@ -167,6 +167,8 @@ export declare function gmvPriceAggregateArtifactContentV1(aggregateInput: unkno
     readonly byteLength: number;
 };
 export declare function strictBftPriceAggregateThresholdV1(selectedValidatorCount: number): number;
+/** Raw digest signature primitive shared by the aggregate and daily observation verifier. */
+export declare function verifyRawEd25519PriceSignatureV1(publicKey: string, signature: string, digest: Buffer): boolean;
 export declare function verifyGmvPriceAggregateV1(input: VerifyGmvPriceAggregateInputV1): VerifiedGmvPriceAggregateV1;
 /**
  * Extract the complete V4 price projection while rejecting unknown fields on

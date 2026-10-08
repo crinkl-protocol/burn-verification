@@ -235,6 +235,96 @@ function verifyCandidateWithContributorCount(contributingValidatorCount) {
   });
 }
 
+test("candidate V4 accepts the exact committee-signed price", () => {
+  const aggregate = fixture.priceAggregate;
+  const artifact = gmvPriceAggregateArtifactContentV1(aggregate);
+  const candidate = candidateForAggregate(aggregate, artifact);
+  const verified = verifyGmvPriceAggregateForCandidateV4({
+    aggregate,
+    candidate,
+    resolvedArtifactContentHash: artifact.contentHash,
+    resolvedSampleSetRoot: fixture.resolvedPriceSampleSetRoot,
+    registry: authenticatedRegistry()
+  });
+  assert.equal(candidate.v3.priceMicroUsdPerToken, verified.aggregate.aggregation.priceMicroUsdPerToken);
+  assert.equal(verified.validDistinctSignatureCount, aggregate.signatures.length);
+});
+
+test("candidate V4 retains its historical post-day observation window", () => {
+  const aggregate = fixture.priceAggregate;
+  const artifact = gmvPriceAggregateArtifactContentV1(aggregate);
+  const candidate = candidateForAggregate(aggregate, artifact);
+  candidate.window.windowEnd = aggregate.window.windowEndExclusive;
+  assert.throws(() => verifyGmvPriceAggregateForCandidateV4({ aggregate, candidate,
+    resolvedArtifactContentHash: artifact.contentHash,
+    resolvedSampleSetRoot: fixture.resolvedPriceSampleSetRoot,
+    registry: authenticatedRegistry() }), /CANDIDATE_PRICE_WINDOW_ORDER_MISMATCH/);
+});
+
+test("candidate V4 retains historical attempt freshness for fourteen-day-old prices", () => {
+  const aggregate = fixture.priceAggregate;
+  const artifact = gmvPriceAggregateArtifactContentV1(aggregate);
+  assert.throws(() => verifyGmvPriceAggregateForCandidateV4({ aggregate,
+    candidate: candidateForAggregate(aggregate, artifact),
+    attempt: { requiredEvidenceCapabilities: ["GMV_PRICE_AGGREGATE_V1"],
+      startedAt: new Date(Date.parse(aggregate.publishedAt) + 14 * 86400000).toISOString() },
+    resolvedArtifactContentHash: artifact.contentHash,
+    resolvedSampleSetRoot: fixture.resolvedPriceSampleSetRoot,
+    registry: authenticatedRegistry() }), /CANDIDATE_PRICE_STALE_FOR_ATTEMPT/);
+});
+
+for (const delta of [-1, 1]) {
+  test(`candidate V4 rejects a price differing by ${delta} micro-USD inside the signed tolerance`, () => {
+    const aggregate = fixture.priceAggregate;
+    const artifact = gmvPriceAggregateArtifactContentV1(aggregate);
+    const candidate = candidateForAggregate(aggregate, artifact);
+    candidate.v3.priceMicroUsdPerToken += delta;
+    assert.ok(
+      10_000n <= BigInt(aggregate.aggregation.priceMicroUsdPerToken) * BigInt(aggregate.aggregation.toleranceBps),
+      "the signed tolerance admits a one-micro-USD difference"
+    );
+    const input = {
+      aggregate,
+      candidate,
+      resolvedArtifactContentHash: artifact.contentHash,
+      resolvedSampleSetRoot: fixture.resolvedPriceSampleSetRoot,
+      registry: authenticatedRegistry()
+    };
+    const verdict = gmvPriceAggregateForCandidateV4VerdictV1(input);
+    assert.equal(verdict.accepted, false);
+    assert.equal(verdict.failureCode, "GMV_PRICE_VALUE_MISMATCH");
+    assert.equal(verdict.failureReason, "CANDIDATE_PRICE_VALUE_MISMATCH");
+    assert.throws(
+      () => verifyGmvPriceAggregateForCandidateV4(input),
+      (error) => error.code === "GMV_PRICE_VALUE_MISMATCH" && error.reason === "CANDIDATE_PRICE_VALUE_MISMATCH"
+    );
+  });
+}
+
+for (const failure of ["SIGNATURE_INVALID", "SIGNATURE_QUORUM_UNSATISFIED"]) {
+  test(`candidate V4 exact price preserves ${failure} rejection`, () => {
+    const aggregate = structuredClone(fixture.priceAggregate);
+    if (failure === "SIGNATURE_INVALID") {
+      const signature = Buffer.from(aggregate.signatures[0].signature, "base64");
+      signature[0] ^= 1;
+      aggregate.signatures[0].signature = signature.toString("base64");
+    } else {
+      aggregate.signatures = aggregate.signatures.slice(0, aggregate.committee.requiredSignatures - 1);
+    }
+    const artifact = gmvPriceAggregateArtifactContentV1(aggregate);
+    const verdict = gmvPriceAggregateForCandidateV4VerdictV1({
+      aggregate,
+      candidate: candidateForAggregate(aggregate, artifact),
+      resolvedArtifactContentHash: artifact.contentHash,
+      resolvedSampleSetRoot: fixture.resolvedPriceSampleSetRoot,
+      registry: authenticatedRegistry()
+    });
+    assert.equal(verdict.accepted, false);
+    assert.equal(verdict.failureCode, "GMV_PRICE_AGGREGATE_INVALID");
+    assert.equal(verdict.failureReason, failure);
+  });
+}
+
 test("SAMPLE_CONTRIBUTORS_EXCEED_COMMITTEE is in the closed reason vocabulary", () => {
   assert.ok(
     GMV_PRICE_AGGREGATE_REASONS_V1.includes("SAMPLE_CONTRIBUTORS_EXCEED_COMMITTEE")
