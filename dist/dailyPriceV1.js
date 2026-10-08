@@ -329,6 +329,8 @@ export function verifyGmvHistoricalPriceV1(input) {
             reject("HISTORICAL_PRICE_SCOPE_MISMATCH");
         if (assignment.signedAtUnixMs > Date.parse(aggregate.publishedAt))
             reject("ASSIGNMENT_TIME_MISMATCH");
+        if (Date.parse(selection.primaryLookup.observedAt) < Date.parse(aggregate.publishedAt))
+            reject("HISTORICAL_PRICE_LOOKUP_TIME_MISMATCH");
         const fixingWindowDay = Math.floor(Date.parse(aggregate.publishedAt) / 86400000);
         if (Math.floor(Date.parse(aggregate.window.windowEndExclusive) / 86400000) !== fixingWindowDay ||
             fixingWindowDay !== selection.priceWindowDay)

@@ -80,6 +80,7 @@ const mutations=[
   ["wrong registry network",i=>{i.expected.registryNetworkId="another-registry-network";},"HISTORICAL_PRICE_SCOPE_MISMATCH"],
   ["wrong accepted full source",i=>{i.expected.source.poolId="different-pool";},"HISTORICAL_PRICE_SCOPE_MISMATCH"],
   ["wrong accepted policy",i=>{i.expected.aggregationPolicyHash=`sha256:${"0".repeat(64)}`;},"HISTORICAL_PRICE_POLICY_MISMATCH"],
+  ["lookup predating selected price publication",i=>{i.priceSelection.primaryLookup.observedAt="2026-09-25T00:11:25.694Z";},"HISTORICAL_PRICE_LOOKUP_TIME_MISMATCH"],
   ["missing trusted full policy",i=>{delete i.expected.aggregationPolicy;},"SCHEMA_INVALID"],
   ["weakened trusted sample policy",i=>{i.expected.aggregationPolicy.minimumSamplesPerContributor++;},"HISTORICAL_PRICE_POLICY_MISMATCH"],
   ["weakened trusted publication delay",i=>{i.expected.aggregationPolicy.maximumPublicationDelaySeconds++;},"HISTORICAL_PRICE_POLICY_MISMATCH"],
