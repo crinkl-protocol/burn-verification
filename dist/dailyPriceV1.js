@@ -320,6 +320,8 @@ export function verifyGmvDailyPriceV1(input) {
             duty.sourceProfileHash !== asSha256Digest(expected.sourceProfileHash, "expected.sourceProfileHash") ||
             duty.aggregationPolicyHash !== expected.policy.aggregationPolicyHash)
             reject("DUTY_BINDING_MISMATCH");
+        if (asRecord(input.authenticatedCommittee.registrySnapshot, "authenticated registry snapshot").networkId !== expected.networkId)
+            reject("REGISTRY_NETWORK_MISMATCH");
         if (Date.parse(duty.windowStart) !== dayStart + policy.dailyWindowStartOffsetSeconds * 1000 ||
             Date.parse(duty.windowEndExclusive) !== dayStart + policy.dailyWindowEndOffsetSeconds * 1000)
             reject("DUTY_WINDOW_MISMATCH");

@@ -120,6 +120,31 @@ test("daily price verifies signed committee evidence and independent observation
   assert.equal(verified.aggregate.aggregation.priceMicroUsdPerToken, 100001);
   assert.equal(verified.validDistinctSignatureCount, 4);
 });
+
+test("daily price rejects a coherently re-signed authenticated committee from another network", () => {
+  const input = inputForDailyPrice(), committee = input.authenticatedCommittee;
+  committee.registrySnapshot.networkId = "another-authenticated-network";
+  const registryHash = hash(canonicalize(committee.registrySnapshot));
+  committee.registry.registryHash = registryHash;
+  const evidence = input.committeeSelectionEvidence;
+  evidence.networkId = committee.registrySnapshot.networkId; evidence.registryHash = registryHash;
+  evidence.workerStatusEnvelopes.forEach((entry, index) => {
+    entry.envelope.networkId = evidence.networkId; entry.envelope.status.networkId = evidence.networkId;
+    const resultHash = hash(canonicalize(entry.envelope.status)); entry.envelope.resultHash = resultHash;
+    const signature = entry.envelope.validatorSignature;
+    signature.policyHash = registryHash; signature.registrySnapshotHash = registryHash; signature.resultHash = resultHash;
+    const { signature: _s, ...unsigned } = signature;
+    signature.signature = `ed25519:${sign(null, Buffer.from(canonicalize({ ...unsigned, version: "ValidatorSignaturePreimageV1" })),
+      keypairs[index].privateKey).toString("base64")}`;
+    entry.envelopeHash = hash(canonicalize(entry.envelope));
+  });
+  rehashSelection(input);
+  committee.assignment.assignmentId = `gmv-price-day:${hashGmvRewardDayPriceDutyV1(input.priceDuty).slice(7)}:${input.committeeSelectionEvidenceHash.slice(7)}`;
+  input.aggregate.committee.registryHash = registryHash;
+  input.aggregate.committee.assignmentId = committee.assignment.assignmentId;
+  resign(input.aggregate);
+  assert.throws(() => verifyGmvDailyPriceV1(input), /REGISTRY_NETWORK_MISMATCH/);
+});
 for (const delta of [-1, 1]) test(`daily consumption rejects a ${delta} micro-USD difference`, () => {
   const input = inputForDailyPrice(); input.expectedPriceMicroUsdPerToken += delta;
   assert.throws(() => verifyGmvDailyPriceV1(input), /PRICE_VALUE_MISMATCH/);
