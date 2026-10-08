@@ -1,4 +1,4 @@
-/** Daily price evidence binds an authority-authenticated committee to one reward day. */
+/** Historical price evidence binds an authenticated committee fixing to one GMV day. */
 import { createPublicKey } from "node:crypto";
 import {
   asRecord, assertExactKeys, asNonNegativeInteger, asPositiveInteger,
@@ -6,89 +6,37 @@ import {
   type CanonicalValue
 } from "./canonical.js";
 import {
-  gmvPriceAggregateArtifactContentV1, verifyGmvPriceAggregateV1,
+  verifyGmvPriceAggregateV1,
   verifyRawEd25519PriceSignatureV1,
   type GmvPriceAggregateRegistryViewV1, type VerifiedGmvPriceAggregateV1
 } from "./priceAggregateV1.js";
 
-export interface GmvDailyPriceAggregationPolicyV1 {
-  readonly aggregationPolicyHash: string;
-  readonly minimumSamplesPerContributor: number;
-  readonly maximumPublicationDelaySeconds: number;
-  readonly minimumPoolTvlMicroUsd: string;
-  /** Formation policy only; the daily price must be consumed exactly. */
-  readonly toleranceBps: number;
-  readonly dailyWindowStartOffsetSeconds: number;
-  readonly dailyWindowEndOffsetSeconds: number;
-}
-export interface GmvRewardDayPriceDutyV1 {
-  readonly domain: "crinkl:gmv:reward-day-price-duty:v1";
-  readonly schemaVersion: 1;
-  readonly protocolVersion: "1.0.0-rc.1";
-  readonly networkId: string;
-  readonly rewardWindowDay: number;
-  readonly sourceProfileHash: string;
-  readonly aggregationPolicyHash: string;
-  readonly windowStart: string;
-  readonly windowEndExclusive: string;
-}
-
-export interface VerifyGmvDailyPriceInputV1 {
-  readonly priceDuty: unknown;
-  readonly aggregate: unknown;
-  /** Independently fetched observation-set bytes, never the candidate's claimed root. */
-  readonly observationSet: unknown;
-  readonly committeeSelectionEvidenceHash: string;
-  readonly committeeSelectionEvidence: unknown;
-  /**
-   * Outputs of pinned-authority authentication of the historical registry,
-   * assignment and daily selection evidence. This pure verifier does not
-   * authenticate the network root. Wrappers must authenticate these before
-   * calling, using their own authority pin, not an incoming artifact's key.
-   */
-  readonly authenticatedCommittee: {
-    readonly registry: GmvPriceAggregateRegistryViewV1;
-    readonly registrySnapshot: unknown;
-    readonly assignment: {
-      readonly assignmentId: string;
-      readonly assignmentHash: string;
-      readonly selectedValidatorIds: readonly string[];
-      readonly signedAtUnixMs: number;
-    };
+export interface AuthenticatedGmvHistoricalPriceCommitteeV1 {
+  readonly registry: GmvPriceAggregateRegistryViewV1;
+  readonly registrySnapshot: unknown;
+  readonly assignment: {
+    readonly assignmentId: string;
+    readonly assignmentHash: string;
+    readonly selectedValidatorIds: readonly string[];
+    readonly signedAtUnixMs: number;
   };
-  /** Independently authenticated active profile/policy, never derived from priceDuty. */
-  readonly expected: {
-    readonly networkId: string;
-    readonly rewardWindowDay: number;
-    readonly sourceProfileHash: string;
-    readonly policy: GmvDailyPriceAggregationPolicyV1;
-  };
-  readonly expectedPriceMicroUsdPerToken?: number;
 }
-export interface VerifiedGmvDailyPriceV1 extends VerifiedGmvPriceAggregateV1 {
-  readonly priceDuty: GmvRewardDayPriceDutyV1;
-  readonly priceDutyHash: string;
-  readonly committeeSelectionEvidenceHash: string;
-}
-export class GmvDailyPriceErrorV1 extends Error {
-  readonly code = "GMV_DAILY_PRICE_INVALID";
+export class GmvHistoricalPriceErrorV1 extends Error {
+  readonly code = "GMV_HISTORICAL_PRICE_INVALID";
   constructor(readonly reason: string) {
-    super(`GMV_DAILY_PRICE_INVALID:${reason}`);
-    this.name = "GmvDailyPriceErrorV1";
+    super(`GMV_HISTORICAL_PRICE_INVALID:${reason}`);
+    this.name = "GmvHistoricalPriceErrorV1";
   }
 }
-function reject(reason: string): never { throw new GmvDailyPriceErrorV1(reason); }
+function reject(reason: string): never { throw new GmvHistoricalPriceErrorV1(reason); }
 function exact(value: unknown, fields: readonly string[]): Record<string, unknown> {
-  const record = asRecord(value, "daily price evidence");
-  assertExactKeys(record, fields, "daily price evidence");
+  const record = asRecord(value, "historical price evidence");
+  assertExactKeys(record, fields, "historical price evidence");
   return record;
 }
 const digest = (domain: string, value: unknown): string =>
   `sha256:${sha256Hex(`${domain}\u0000${canonicalize(value as CanonicalValue)}`)}`;
 
-export const GMV_DAILY_PRICE_REQUIRED_CAPABILITIES_V1 = [
-  "gmv_price_aggregate_v1", "gmv_daily_price_formation_request_v1"
-] as const;
 const canonicalHash = (value: unknown) => `sha256:${hashCanonicalValue(value as CanonicalValue)}`;
 const codeUnitCompare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 const statusFields = new Set([
@@ -112,8 +60,9 @@ interface RegistryValidator {
   readonly removedAtUnixMs?: number;
   readonly signingKeys: readonly { readonly signingKeyId: string; readonly status: string; readonly publicKeyPem: string }[];
 }
-function verifyDailyWorkerStatus(envelopeInput: unknown, validatorId: string, registry: Record<string, unknown>,
-  registryHash: string, validators: readonly RegistryValidator[], selectedAt: number): string | undefined {
+function verifyHistoricalWorkerStatus(envelopeInput: unknown, validatorId: string, registry: Record<string, unknown>,
+  registryHash: string, validators: readonly RegistryValidator[], selectedAt: number,
+  requiredCapabilities: readonly string[]): string | undefined {
   try {
     const envelope = asRecord(envelopeInput, "worker envelope");
     if (Object.keys(envelope).some((field) => !envelopeFields.has(field)) ||
@@ -149,7 +98,7 @@ function verifyDailyWorkerStatus(envelopeInput: unknown, validatorId: string, re
     const publicKey = Buffer.from(createPublicKey(key.publicKeyPem).export({ format: "der", type: "spki" })).subarray(-32).toString("base64");
     if (!verifyRawEd25519PriceSignatureV1(publicKey, signature.signature.slice(8),
         Buffer.from(canonicalize({ ...preimage, version: "ValidatorSignaturePreimageV1" } as CanonicalValue), "utf8"))) throw new Error();
-    if (!GMV_DAILY_PRICE_REQUIRED_CAPABILITIES_V1.every((cap) => (status.capabilities as unknown[]).includes(cap)))
+    if (!requiredCapabilities.every((cap) => (status.capabilities as unknown[]).includes(cap)))
       return "capability_not_advertised";
     return undefined;
   } catch { return "status_evidence_invalid"; }
@@ -157,17 +106,21 @@ function verifyDailyWorkerStatus(envelopeInput: unknown, validatorId: string, re
 /**
  * Worker-envelope checks, capable-pool selection and code-unit ordering are
  * extracted from crinkl-proof-validator 3542863ca3cb41103414202247c87523dc274e2d,
- * bin/lib/gmv-price-committee-selection.mjs V2. The daily identity binds its
- * own duty and capability family; the five-seat floor, 1800-second age,
+ * bin/lib/gmv-price-committee-selection.mjs V2. The original statement and capability family retain their bindings;
+ * the five-seat floor, 1800-second age,
  * 60-second skew and signed-status eligibility retain that source's rules.
  */
-export function verifyGmvDailyPriceCommitteeSelectionEvidenceV1(input: {
-  readonly evidence: unknown; readonly evidenceHash: string; readonly priceDutyHash: string;
+interface VerifyPriceCommitteeSelectionInput {
+  readonly evidence: unknown; readonly evidenceHash: string; readonly subjectHash: string;
   readonly authenticatedRegistrySnapshot: unknown; readonly authenticatedRegistry: GmvPriceAggregateRegistryViewV1;
   readonly authenticatedAssignmentSignedAtUnixMs: number;
+}
+function verifyPriceCommitteeSelection(input: VerifyPriceCommitteeSelectionInput, format: {
+  readonly version: string; readonly subjectField: "statementHash";
+  readonly requiredCapabilities: readonly string[]; readonly compare: (a: string, b: string) => number;
 }): { readonly evidenceHash: string; readonly selectedValidatorIds: readonly string[]; readonly requiredSignatures: number } {
   try {
-    const evidence = exact(input.evidence, ["version", "networkId", "priceDutyHash", "selectedAtUnixMs", "registrySequence",
+    const evidence = exact(input.evidence, ["version", "networkId", format.subjectField, "selectedAtUnixMs", "registrySequence",
       "registryHash", "requiredCapabilities", "capabilityMaxAgeSeconds", "minimumCommitteeSize", "eligibleValidatorIds",
       "selectedValidatorIds", "requiredSignatures", "exclusions", "workerStatusEnvelopes"]);
     const registry = asRecord(input.authenticatedRegistrySnapshot, "authenticated registry snapshot");
@@ -175,10 +128,10 @@ export function verifyGmvDailyPriceCommitteeSelectionEvidenceV1(input: {
     const selectedAt = asNonNegativeInteger(evidence.selectedAtUnixMs, "selectedAtUnixMs");
     const replayAt = asNonNegativeInteger(input.authenticatedAssignmentSignedAtUnixMs, "authenticated assignment time");
     if (registryHash !== input.authenticatedRegistry.registryHash || registry.registrySequence !== input.authenticatedRegistry.registrySequence ||
-        evidence.version !== "GmvDailyPriceCommitteeSelectionEvidenceV1" || evidence.networkId !== registry.networkId ||
-        evidence.priceDutyHash !== asSha256Digest(input.priceDutyHash, "priceDutyHash") ||
+        evidence.version !== format.version || evidence.networkId !== registry.networkId ||
+        evidence[format.subjectField] !== asSha256Digest(input.subjectHash, "selection subject hash") ||
         evidence.registryHash !== registryHash || evidence.registrySequence !== registry.registrySequence ||
-        canonicalize(evidence.requiredCapabilities as CanonicalValue) !== canonicalize(GMV_DAILY_PRICE_REQUIRED_CAPABILITIES_V1) ||
+        canonicalize(evidence.requiredCapabilities as CanonicalValue) !== canonicalize(format.requiredCapabilities) ||
         evidence.capabilityMaxAgeSeconds !== 1800 || evidence.minimumCommitteeSize !== 5 ||
         selectedAt > replayAt + 60000 || replayAt - selectedAt > 1800000 ||
         canonicalHash(evidence) !== asSha256Digest(input.evidenceHash, "selection evidence hash") ||
@@ -188,7 +141,7 @@ export function verifyGmvDailyPriceCommitteeSelectionEvidenceV1(input: {
     const validators = registry.validators as RegistryValidator[];
     const eligible = validators.filter((entry) => entry && entry.status === "active" && typeof entry.validatorId === "string" &&
       entry.validatorId.length > 0 && Array.isArray(entry.signingKeys) && entry.signingKeys.some((key) => key && key.status === "active"))
-      .map((entry) => entry.validatorId).sort(codeUnitCompare);
+      .map((entry) => entry.validatorId).sort(format.compare);
     if (new Set(eligible).size !== eligible.length) reject("SELECTION_EVIDENCE_INVALID");
     const envelopes = new Map<string, Record<string, unknown>>();
     for (const raw of evidence.workerStatusEnvelopes) {
@@ -204,7 +157,7 @@ export function verifyGmvDailyPriceCommitteeSelectionEvidenceV1(input: {
       const entry = envelopes.get(id);
       if (entry === undefined) { exclusions.push({ validatorId: id, reason: "no_status_evidence" }); continue; }
       replayedEnvelopes.push(entry);
-      const reason = verifyDailyWorkerStatus(entry.envelope, id, registry, registryHash, validators, selectedAt);
+      const reason = verifyHistoricalWorkerStatus(entry.envelope, id, registry, registryHash, validators, selectedAt, format.requiredCapabilities);
       if (reason === undefined) selected.push(id); else exclusions.push({ validatorId: id, reason });
     }
     if (selected.length < 5) reject("SELECTION_QUORUM_UNAVAILABLE");
@@ -217,7 +170,7 @@ export function verifyGmvDailyPriceCommitteeSelectionEvidenceV1(input: {
       reject("SELECTION_EVIDENCE_MISMATCH");
     return { evidenceHash: input.evidenceHash, selectedValidatorIds: selected, requiredSignatures };
   } catch (error) {
-    if (error instanceof GmvDailyPriceErrorV1) throw error;
+    if (error instanceof GmvHistoricalPriceErrorV1) throw error;
     return reject("SELECTION_EVIDENCE_INVALID");
   }
 }
@@ -227,56 +180,8 @@ function timestamp(value: unknown): string {
       !Number.isFinite(Date.parse(parsed)) || new Date(parsed).toISOString() !== parsed) reject("SCHEMA_INVALID");
   return parsed;
 }
-function offset(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || Object.is(value, -0) ||
-      Math.abs(value) > 86400) reject("POLICY_INVALID");
-  return value;
-}
-function policyPreimage(input: unknown) {
-  const policy = exact(input, ["aggregationPolicyHash", "minimumSamplesPerContributor",
-    "maximumPublicationDelaySeconds", "minimumPoolTvlMicroUsd", "toleranceBps",
-    "dailyWindowStartOffsetSeconds", "dailyWindowEndOffsetSeconds"]);
-  const start = offset(policy.dailyWindowStartOffsetSeconds);
-  const end = offset(policy.dailyWindowEndOffsetSeconds);
-  const tvl = asString(policy.minimumPoolTvlMicroUsd, "minimumPoolTvlMicroUsd");
-  if (start >= end || !/^(0|[1-9][0-9]*)$/u.test(tvl)) reject("POLICY_INVALID");
-  return {
-    minimumSamplesPerContributor: asPositiveInteger(policy.minimumSamplesPerContributor, "minimumSamplesPerContributor"),
-    maximumPublicationDelaySeconds: asPositiveInteger(policy.maximumPublicationDelaySeconds, "maximumPublicationDelaySeconds"),
-    minimumPoolTvlMicroUsd: tvl,
-    toleranceBps: asNonNegativeInteger(policy.toleranceBps, "toleranceBps"),
-    dailyWindowStartOffsetSeconds: start, dailyWindowEndOffsetSeconds: end
-  };
-}
-export function hashGmvDailyPriceAggregationPolicyV1(policy: GmvDailyPriceAggregationPolicyV1): string {
-  return digest("CRINKL_GMV_DAILY_PRICE_AGGREGATION_POLICY_V1", policyPreimage(policy));
-}
-export function parseGmvRewardDayPriceDutyV1(input: unknown): GmvRewardDayPriceDutyV1 {
-  try {
-    const value = exact(input, ["domain", "schemaVersion", "protocolVersion", "networkId",
-      "rewardWindowDay", "sourceProfileHash", "aggregationPolicyHash", "windowStart", "windowEndExclusive"]);
-    if (value.domain !== "crinkl:gmv:reward-day-price-duty:v1" || value.schemaVersion !== 1 ||
-        value.protocolVersion !== "1.0.0-rc.1") reject("SCHEMA_INVALID");
-    const networkId = asString(value.networkId, "networkId");
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(networkId)) reject("SCHEMA_INVALID");
-    const windowStart = timestamp(value.windowStart);
-    const windowEndExclusive = timestamp(value.windowEndExclusive);
-    if (Date.parse(windowStart) >= Date.parse(windowEndExclusive)) reject("SCHEMA_INVALID");
-    return { domain: "crinkl:gmv:reward-day-price-duty:v1", schemaVersion: 1,
-      protocolVersion: "1.0.0-rc.1", networkId,
-      rewardWindowDay: asNonNegativeInteger(value.rewardWindowDay, "rewardWindowDay"),
-      sourceProfileHash: asSha256Digest(value.sourceProfileHash, "sourceProfileHash"),
-      aggregationPolicyHash: asSha256Digest(value.aggregationPolicyHash, "aggregationPolicyHash"),
-      windowStart, windowEndExclusive };
-  } catch (error) {
-    if (error instanceof GmvDailyPriceErrorV1) throw error;
-    return reject("SCHEMA_INVALID");
-  }
-}
-export function hashGmvRewardDayPriceDutyV1(input: unknown): string {
-  return digest("CRINKL_GMV_REWARD_DAY_PRICE_DUTY_V1", parseGmvRewardDayPriceDutyV1(input));
-}
-function reproduceObservationSet(input: VerifyGmvDailyPriceInputV1, verified: VerifiedGmvPriceAggregateV1): void {
+function reproduceObservationSet(input: Pick<VerifyGmvHistoricalPriceInputV1, "observationSet" | "authenticatedCommittee">,
+  verified: VerifiedGmvPriceAggregateV1): void {
   const aggregate = verified.aggregate;
   const set = exact(input.observationSet, ["domain", "schemaVersion", "networkId", "sourceProfileHash",
     "aggregationPolicyHash", "assignmentId", "assignmentHash", "windowStart", "windowEndExclusive", "reports"]);
@@ -346,64 +251,136 @@ function reproduceObservationSet(input: VerifyGmvDailyPriceInputV1, verified: Ve
       Math.max(...lastSlots) !== aggregate.window.lastFinalizedSlot ||
       `sha256:${hashCanonicalValue(set as CanonicalValue)}` !== aggregate.sampleCommitment.observationSet.contentHash ||
       Buffer.byteLength(bytes) !== aggregate.sampleCommitment.observationSet.byteLength ||
-      digest("CRINKL_GMV_PRICE_OBSERVATION_SET_ROOT_V1", reportHashes) !== aggregate.sampleCommitment.sampleSetRoot)
+      digest("CRINKL_GMV_PRICE_SAMPLE_SET_ROOT_V1", reportHashes) !== aggregate.sampleCommitment.sampleSetRoot)
     reject("OBSERVATION_SET_COMMITMENT_MISMATCH");
 }
-export function verifyGmvDailyPriceV1(input: VerifyGmvDailyPriceInputV1): VerifiedGmvDailyPriceV1 {
+export interface GmvHistoricalPriceSelectionV1 {
+  readonly rule: "GMV_DAY_OR_PREVIOUS_DAY_V1";
+  readonly gmvWindowDay: number;
+  readonly priceWindowDay: number;
+  readonly registryNetworkId: string;
+  readonly aggregateArtifactContentHash: string;
+  readonly aggregateHash: string;
+  /** A bounded lookup observation, not a proof of global price absence. */
+  readonly primaryLookup: {
+    readonly status: "AVAILABLE" | "UNAVAILABLE";
+    readonly observedAt: string;
+    readonly reason: "DIRECT_PRICE" | "NOT_FOUND" | "TRANSPORT_UNAVAILABLE";
+  };
+}
+export interface VerifyGmvHistoricalPriceInputV1 {
+  readonly aggregate: unknown;
+  readonly observationSet: unknown;
+  readonly committeeSelectionEvidence: unknown;
+  readonly committeeSelectionEvidenceHash: string;
+  /** Pinned-root authenticated historical registry and original assignment. */
+  readonly authenticatedCommittee: AuthenticatedGmvHistoricalPriceCommitteeV1;
+  readonly priceSelection: unknown;
+  /**
+   * Context bound by the accepted profile and candidate/GMV-day artifact pin.
+   * Wrappers enforce pin immutability and authenticate the network root.
+   * The chain-price network and validator-registry network have distinct pins.
+   */
+  readonly expected: {
+    readonly gmvWindowDay: number;
+    readonly priceNetworkId: string;
+    readonly registryNetworkId: string;
+    readonly source: unknown;
+    readonly aggregationPolicyHash: string;
+    readonly aggregateArtifactContentHash: string;
+    readonly aggregateHash: string;
+    readonly priceMicroUsdPerToken: number;
+  };
+}
+export interface VerifiedGmvHistoricalPriceV1 extends VerifiedGmvPriceAggregateV1 {
+  readonly fixingWindowDay: number;
+  readonly priceSelection: GmvHistoricalPriceSelectionV1;
+  readonly originalStatementHash: string;
+  readonly committeeSelectionEvidenceHash: string;
+}
+export function parseGmvHistoricalPriceSelectionV1(input: unknown): GmvHistoricalPriceSelectionV1 {
   try {
-    const duty = parseGmvRewardDayPriceDutyV1(input.priceDuty), expected = input.expected;
-    const policy = policyPreimage(expected.policy);
-    if (hashGmvDailyPriceAggregationPolicyV1(expected.policy) !== expected.policy.aggregationPolicyHash)
-      reject("POLICY_HASH_MISMATCH");
-    const day = asNonNegativeInteger(expected.rewardWindowDay, "expected.rewardWindowDay");
-    const dayStart = day * 86400 * 1000;
-    if (!Number.isSafeInteger(dayStart)) reject("DAY_INVALID");
-    if (duty.rewardWindowDay !== day || duty.networkId !== expected.networkId ||
-        duty.sourceProfileHash !== asSha256Digest(expected.sourceProfileHash, "expected.sourceProfileHash") ||
-        duty.aggregationPolicyHash !== expected.policy.aggregationPolicyHash) reject("DUTY_BINDING_MISMATCH");
-    if (asRecord(input.authenticatedCommittee.registrySnapshot, "authenticated registry snapshot").networkId !== expected.networkId)
-      reject("REGISTRY_NETWORK_MISMATCH");
-    if (Date.parse(duty.windowStart) !== dayStart + policy.dailyWindowStartOffsetSeconds * 1000 ||
-        Date.parse(duty.windowEndExclusive) !== dayStart + policy.dailyWindowEndOffsetSeconds * 1000)
-      reject("DUTY_WINDOW_MISMATCH");
-    const dutyHash = hashGmvRewardDayPriceDutyV1(duty);
-    const selectionHash = asSha256Digest(input.committeeSelectionEvidenceHash, "committeeSelectionEvidenceHash");
+    const selection = exact(input, ["rule", "gmvWindowDay", "priceWindowDay", "registryNetworkId",
+      "aggregateArtifactContentHash", "aggregateHash", "primaryLookup"]);
+    const lookup = exact(selection.primaryLookup, ["status", "observedAt", "reason"]);
+    const gmvWindowDay = asNonNegativeInteger(selection.gmvWindowDay, "gmvWindowDay");
+    const priceWindowDay = asNonNegativeInteger(selection.priceWindowDay, "priceWindowDay");
+    const direct = priceWindowDay === gmvWindowDay && lookup.status === "AVAILABLE" && lookup.reason === "DIRECT_PRICE";
+    const fallback = priceWindowDay === gmvWindowDay - 1 && lookup.status === "UNAVAILABLE" &&
+      (lookup.reason === "NOT_FOUND" || lookup.reason === "TRANSPORT_UNAVAILABLE");
+    if (selection.rule !== "GMV_DAY_OR_PREVIOUS_DAY_V1" || (!direct && !fallback)) reject("HISTORICAL_PRICE_SELECTION_INVALID");
+    const registryNetworkId = asString(selection.registryNetworkId, "registryNetworkId");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(registryNetworkId)) reject("HISTORICAL_PRICE_SELECTION_INVALID");
+    return { rule: "GMV_DAY_OR_PREVIOUS_DAY_V1", gmvWindowDay, priceWindowDay, registryNetworkId,
+      aggregateArtifactContentHash: asSha256Digest(selection.aggregateArtifactContentHash, "aggregateArtifactContentHash"),
+      aggregateHash: asSha256Digest(selection.aggregateHash, "aggregateHash"),
+      primaryLookup: { status: direct ? "AVAILABLE" : "UNAVAILABLE", observedAt: timestamp(lookup.observedAt),
+        reason: direct ? "DIRECT_PRICE" : lookup.reason as "NOT_FOUND" | "TRANSPORT_UNAVAILABLE" } };
+  } catch (error) {
+    if (error instanceof GmvHistoricalPriceErrorV1) throw error;
+    return reject("HISTORICAL_PRICE_SELECTION_INVALID");
+  }
+}
+/**
+ * An existing aggregate's signed publication and observation-window-end dates
+ * identify its fixing day. The original signed assignment and V1/V2 worker
+ * selection retain their statement binding; the consuming burn does not
+ * redefine it. Selection replay follows the V1 locale or V2 code-unit order
+ * in crinkl-proof-validator 3542863ca3cb41103414202247c87523dc274e2d,
+ * bin/lib/gmv-price-committee-selection.mjs.
+ */
+export function verifyGmvHistoricalPriceV1(input: VerifyGmvHistoricalPriceInputV1): VerifiedGmvHistoricalPriceV1 {
+  try {
+    const selection = parseGmvHistoricalPriceSelectionV1(input.priceSelection), expected = input.expected;
+    const registrySnapshot = asRecord(input.authenticatedCommittee.registrySnapshot, "authenticated registry snapshot");
+    const expectedDay = asNonNegativeInteger(expected.gmvWindowDay, "expected.gmvWindowDay");
+    if (selection.gmvWindowDay !== expectedDay || selection.registryNetworkId !== expected.registryNetworkId ||
+        registrySnapshot.networkId !== expected.registryNetworkId) reject("HISTORICAL_PRICE_SCOPE_MISMATCH");
+    const artifactPin = asSha256Digest(expected.aggregateArtifactContentHash, "expected artifact pin");
+    const aggregatePin = asSha256Digest(expected.aggregateHash, "expected aggregate pin");
+    if (selection.aggregateArtifactContentHash !== artifactPin || selection.aggregateHash !== aggregatePin)
+      reject("HISTORICAL_PRICE_PIN_MISMATCH");
     const assignment = input.authenticatedCommittee.assignment;
-    const selection = verifyGmvDailyPriceCommitteeSelectionEvidenceV1({ evidence: input.committeeSelectionEvidence,
-      evidenceHash: selectionHash, priceDutyHash: dutyHash,
-      authenticatedRegistrySnapshot: input.authenticatedCommittee.registrySnapshot,
-      authenticatedRegistry: input.authenticatedCommittee.registry,
-      authenticatedAssignmentSignedAtUnixMs: assignment.signedAtUnixMs });
-    if (canonicalize(selection.selectedValidatorIds) !== canonicalize(assignment.selectedValidatorIds))
-      reject("ASSIGNMENT_SELECTION_MISMATCH");
-    if (assignment.assignmentId !== `gmv-price-day:${dutyHash.slice(7)}:${selectionHash.slice(7)}`)
-      reject("ASSIGNMENT_DUTY_MISMATCH");
-    asSha256Digest(assignment.assignmentHash, "authenticated assignmentHash");
-    const set = asRecord(input.observationSet, "observationSet");
+    const originalBinding = /^gmv-price:([0-9a-f]{64}):([0-9a-f]{64})$/u.exec(assignment.assignmentId);
+    const selectionHash = asSha256Digest(input.committeeSelectionEvidenceHash, "committee selection evidence hash");
+    if (originalBinding === null || `sha256:${originalBinding[2]}` !== selectionHash) reject("ASSIGNMENT_SELECTION_MISMATCH");
+    const originalStatementHash = `sha256:${originalBinding[1]}`;
+    const evidence = asRecord(input.committeeSelectionEvidence, "historical selection evidence");
+    const v1Capabilities = ["gmv_price_aggregate_v1", "gmv_price_aggregate_request_v2"];
+    const v2Capabilities = [...v1Capabilities, "gmv_price_committee_selection_evidence_v2", "gmv_price_aggregate_request_v3"];
+    if (evidence.version !== "GmvPriceCommitteeSelectionEvidenceV1" && evidence.version !== "GmvPriceCommitteeSelectionEvidenceV2")
+      reject("SELECTION_EVIDENCE_INVALID");
+    const replay = verifyPriceCommitteeSelection({ evidence, evidenceHash: selectionHash, subjectHash: originalStatementHash,
+      authenticatedRegistrySnapshot: registrySnapshot, authenticatedRegistry: input.authenticatedCommittee.registry,
+      authenticatedAssignmentSignedAtUnixMs: assignment.signedAtUnixMs }, {
+      version: String(evidence.version), subjectField: "statementHash",
+      requiredCapabilities: evidence.version === "GmvPriceCommitteeSelectionEvidenceV1" ? v1Capabilities : v2Capabilities,
+      compare: evidence.version === "GmvPriceCommitteeSelectionEvidenceV1" ? (a, b) => a.localeCompare(b) : codeUnitCompare });
+    if (canonicalize(replay.selectedValidatorIds) !== canonicalize(assignment.selectedValidatorIds)) reject("ASSIGNMENT_SELECTION_MISMATCH");
+    const set = asRecord(input.observationSet, "observation set");
     if (!Array.isArray(set.reports)) reject("OBSERVATION_SET_INVALID");
-    const sampleRoot = digest("CRINKL_GMV_PRICE_OBSERVATION_SET_ROOT_V1", set.reports.map((entry) =>
+    const sampleRoot = digest("CRINKL_GMV_PRICE_SAMPLE_SET_ROOT_V1", set.reports.map((entry) =>
       asSha256Digest(asRecord(entry, "report").reportHash, "reportHash")));
-    const artifact = gmvPriceAggregateArtifactContentV1(input.aggregate as never);
-    const verified = verifyGmvPriceAggregateV1({ aggregate: input.aggregate,
-      resolvedArtifactContentHash: artifact.contentHash, resolvedSampleSetRoot: sampleRoot,
-      registry: input.authenticatedCommittee.registry });
+    const verified = verifyGmvPriceAggregateV1({ aggregate: input.aggregate, registry: input.authenticatedCommittee.registry,
+      resolvedArtifactContentHash: artifactPin, resolvedSampleSetRoot: sampleRoot });
     const aggregate = verified.aggregate;
-    if (assignment.signedAtUnixMs > Date.parse(aggregate.publishedAt)) reject("ASSIGNMENT_TIME_MISMATCH");
-    if (aggregate.networkId !== duty.networkId || aggregate.source.sourceProfileHash !== duty.sourceProfileHash ||
-        aggregate.aggregation.aggregationPolicyHash !== duty.aggregationPolicyHash ||
-        aggregate.window.windowStart !== duty.windowStart || aggregate.window.windowEndExclusive !== duty.windowEndExclusive ||
+    if (verified.aggregateHash !== aggregatePin || aggregate.networkId !== expected.priceNetworkId ||
+        canonicalize(aggregate.source as unknown as CanonicalValue) !== canonicalize(expected.source as CanonicalValue) ||
+        aggregate.aggregation.aggregationPolicyHash !== asSha256Digest(expected.aggregationPolicyHash, "expected aggregation policy hash") ||
         aggregate.committee.assignmentId !== assignment.assignmentId || aggregate.committee.assignmentHash !== assignment.assignmentHash ||
         canonicalize(aggregate.committee.selectedValidatorIds) !== canonicalize(assignment.selectedValidatorIds))
-      reject("AGGREGATE_DUTY_MISMATCH");
-    for (const field of ["minimumSamplesPerContributor", "maximumPublicationDelaySeconds", "minimumPoolTvlMicroUsd", "toleranceBps"] as const)
-      if (aggregate.aggregation[field] !== policy[field]) reject("AGGREGATE_POLICY_MISMATCH");
+      reject("HISTORICAL_PRICE_SCOPE_MISMATCH");
+    if (assignment.signedAtUnixMs > Date.parse(aggregate.publishedAt)) reject("ASSIGNMENT_TIME_MISMATCH");
+    const fixingWindowDay = Math.floor(Date.parse(aggregate.publishedAt) / 86400000);
+    if (Math.floor(Date.parse(aggregate.window.windowEndExclusive) / 86400000) !== fixingWindowDay ||
+        fixingWindowDay !== selection.priceWindowDay) reject("HISTORICAL_PRICE_DATE_MISMATCH");
     reproduceObservationSet(input, verified);
-    if (input.expectedPriceMicroUsdPerToken !== undefined &&
-        asPositiveInteger(input.expectedPriceMicroUsdPerToken, "expectedPriceMicroUsdPerToken") !== aggregate.aggregation.priceMicroUsdPerToken)
+    if (asPositiveInteger(expected.priceMicroUsdPerToken, "expected priceMicroUsdPerToken") !== aggregate.aggregation.priceMicroUsdPerToken)
       reject("PRICE_VALUE_MISMATCH");
-    return { ...verified, priceDuty: duty, priceDutyHash: dutyHash, committeeSelectionEvidenceHash: selectionHash };
+    return { ...verified, fixingWindowDay, priceSelection: selection, originalStatementHash,
+      committeeSelectionEvidenceHash: selectionHash };
   } catch (error) {
-    if (error instanceof GmvDailyPriceErrorV1 || (error instanceof Error && error.name === "GmvPriceAggregateErrorV1")) throw error;
+    if (error instanceof GmvHistoricalPriceErrorV1 || (error instanceof Error && error.name === "GmvPriceAggregateErrorV1")) throw error;
     return reject("SCHEMA_INVALID");
   }
 }

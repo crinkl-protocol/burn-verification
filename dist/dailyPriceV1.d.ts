@@ -1,89 +1,71 @@
 import { type GmvPriceAggregateRegistryViewV1, type VerifiedGmvPriceAggregateV1 } from "./priceAggregateV1.js";
-export interface GmvDailyPriceAggregationPolicyV1 {
-    readonly aggregationPolicyHash: string;
-    readonly minimumSamplesPerContributor: number;
-    readonly maximumPublicationDelaySeconds: number;
-    readonly minimumPoolTvlMicroUsd: string;
-    /** Formation policy only; the daily price must be consumed exactly. */
-    readonly toleranceBps: number;
-    readonly dailyWindowStartOffsetSeconds: number;
-    readonly dailyWindowEndOffsetSeconds: number;
-}
-export interface GmvRewardDayPriceDutyV1 {
-    readonly domain: "crinkl:gmv:reward-day-price-duty:v1";
-    readonly schemaVersion: 1;
-    readonly protocolVersion: "1.0.0-rc.1";
-    readonly networkId: string;
-    readonly rewardWindowDay: number;
-    readonly sourceProfileHash: string;
-    readonly aggregationPolicyHash: string;
-    readonly windowStart: string;
-    readonly windowEndExclusive: string;
-}
-export interface VerifyGmvDailyPriceInputV1 {
-    readonly priceDuty: unknown;
-    readonly aggregate: unknown;
-    /** Independently fetched observation-set bytes, never the candidate's claimed root. */
-    readonly observationSet: unknown;
-    readonly committeeSelectionEvidenceHash: string;
-    readonly committeeSelectionEvidence: unknown;
-    /**
-     * Outputs of pinned-authority authentication of the historical registry,
-     * assignment and daily selection evidence. This pure verifier does not
-     * authenticate the network root. Wrappers must authenticate these before
-     * calling, using their own authority pin, not an incoming artifact's key.
-     */
-    readonly authenticatedCommittee: {
-        readonly registry: GmvPriceAggregateRegistryViewV1;
-        readonly registrySnapshot: unknown;
-        readonly assignment: {
-            readonly assignmentId: string;
-            readonly assignmentHash: string;
-            readonly selectedValidatorIds: readonly string[];
-            readonly signedAtUnixMs: number;
-        };
+export interface AuthenticatedGmvHistoricalPriceCommitteeV1 {
+    readonly registry: GmvPriceAggregateRegistryViewV1;
+    readonly registrySnapshot: unknown;
+    readonly assignment: {
+        readonly assignmentId: string;
+        readonly assignmentHash: string;
+        readonly selectedValidatorIds: readonly string[];
+        readonly signedAtUnixMs: number;
     };
-    /** Independently authenticated active profile/policy, never derived from priceDuty. */
-    readonly expected: {
-        readonly networkId: string;
-        readonly rewardWindowDay: number;
-        readonly sourceProfileHash: string;
-        readonly policy: GmvDailyPriceAggregationPolicyV1;
-    };
-    readonly expectedPriceMicroUsdPerToken?: number;
 }
-export interface VerifiedGmvDailyPriceV1 extends VerifiedGmvPriceAggregateV1 {
-    readonly priceDuty: GmvRewardDayPriceDutyV1;
-    readonly priceDutyHash: string;
-    readonly committeeSelectionEvidenceHash: string;
-}
-export declare class GmvDailyPriceErrorV1 extends Error {
+export declare class GmvHistoricalPriceErrorV1 extends Error {
     readonly reason: string;
-    readonly code = "GMV_DAILY_PRICE_INVALID";
+    readonly code = "GMV_HISTORICAL_PRICE_INVALID";
     constructor(reason: string);
 }
-export declare const GMV_DAILY_PRICE_REQUIRED_CAPABILITIES_V1: readonly ["gmv_price_aggregate_v1", "gmv_daily_price_formation_request_v1"];
+export interface GmvHistoricalPriceSelectionV1 {
+    readonly rule: "GMV_DAY_OR_PREVIOUS_DAY_V1";
+    readonly gmvWindowDay: number;
+    readonly priceWindowDay: number;
+    readonly registryNetworkId: string;
+    readonly aggregateArtifactContentHash: string;
+    readonly aggregateHash: string;
+    /** A bounded lookup observation, not a proof of global price absence. */
+    readonly primaryLookup: {
+        readonly status: "AVAILABLE" | "UNAVAILABLE";
+        readonly observedAt: string;
+        readonly reason: "DIRECT_PRICE" | "NOT_FOUND" | "TRANSPORT_UNAVAILABLE";
+    };
+}
+export interface VerifyGmvHistoricalPriceInputV1 {
+    readonly aggregate: unknown;
+    readonly observationSet: unknown;
+    readonly committeeSelectionEvidence: unknown;
+    readonly committeeSelectionEvidenceHash: string;
+    /** Pinned-root authenticated historical registry and original assignment. */
+    readonly authenticatedCommittee: AuthenticatedGmvHistoricalPriceCommitteeV1;
+    readonly priceSelection: unknown;
+    /**
+     * Context bound by the accepted profile and candidate/GMV-day artifact pin.
+     * Wrappers enforce pin immutability and authenticate the network root.
+     * The chain-price network and validator-registry network have distinct pins.
+     */
+    readonly expected: {
+        readonly gmvWindowDay: number;
+        readonly priceNetworkId: string;
+        readonly registryNetworkId: string;
+        readonly source: unknown;
+        readonly aggregationPolicyHash: string;
+        readonly aggregateArtifactContentHash: string;
+        readonly aggregateHash: string;
+        readonly priceMicroUsdPerToken: number;
+    };
+}
+export interface VerifiedGmvHistoricalPriceV1 extends VerifiedGmvPriceAggregateV1 {
+    readonly fixingWindowDay: number;
+    readonly priceSelection: GmvHistoricalPriceSelectionV1;
+    readonly originalStatementHash: string;
+    readonly committeeSelectionEvidenceHash: string;
+}
+export declare function parseGmvHistoricalPriceSelectionV1(input: unknown): GmvHistoricalPriceSelectionV1;
 /**
- * Worker-envelope checks, capable-pool selection and code-unit ordering are
- * extracted from crinkl-proof-validator 3542863ca3cb41103414202247c87523dc274e2d,
- * bin/lib/gmv-price-committee-selection.mjs V2. The daily identity binds its
- * own duty and capability family; the five-seat floor, 1800-second age,
- * 60-second skew and signed-status eligibility retain that source's rules.
+ * An existing aggregate's signed publication and observation-window-end dates
+ * identify its fixing day. The original signed assignment and V1/V2 worker
+ * selection retain their statement binding; the consuming burn does not
+ * redefine it. Selection replay follows the V1 locale or V2 code-unit order
+ * in crinkl-proof-validator 3542863ca3cb41103414202247c87523dc274e2d,
+ * bin/lib/gmv-price-committee-selection.mjs.
  */
-export declare function verifyGmvDailyPriceCommitteeSelectionEvidenceV1(input: {
-    readonly evidence: unknown;
-    readonly evidenceHash: string;
-    readonly priceDutyHash: string;
-    readonly authenticatedRegistrySnapshot: unknown;
-    readonly authenticatedRegistry: GmvPriceAggregateRegistryViewV1;
-    readonly authenticatedAssignmentSignedAtUnixMs: number;
-}): {
-    readonly evidenceHash: string;
-    readonly selectedValidatorIds: readonly string[];
-    readonly requiredSignatures: number;
-};
-export declare function hashGmvDailyPriceAggregationPolicyV1(policy: GmvDailyPriceAggregationPolicyV1): string;
-export declare function parseGmvRewardDayPriceDutyV1(input: unknown): GmvRewardDayPriceDutyV1;
-export declare function hashGmvRewardDayPriceDutyV1(input: unknown): string;
-export declare function verifyGmvDailyPriceV1(input: VerifyGmvDailyPriceInputV1): VerifiedGmvDailyPriceV1;
+export declare function verifyGmvHistoricalPriceV1(input: VerifyGmvHistoricalPriceInputV1): VerifiedGmvHistoricalPriceV1;
 //# sourceMappingURL=dailyPriceV1.d.ts.map
